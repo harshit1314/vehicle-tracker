@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Movement Simulator</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+    <!-- Leaflet JS and Plugins -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-rotatedmarker/0.2.0/leaflet.rotatedMarker.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.polyline.snakeanim/L.Polyline.SnakeAnim.js"></script>
+    
+    <style>
+        #map { height: 100%; width: 100%; }
+        /* Smooth transition for the marker's rotation */
+        .leaflet-marker-icon {
+            transition: transform 0.5s linear;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <main class="h-screen w-screen flex flex-col-reverse sm:flex-row overflow-hidden">
+        <!-- Controls Panel -->
+        <div class="w-full sm:w-1/3 md:w-1/4 lg:w-1/5 h-auto sm:h-full p-2 sm:p-4">
+            <div class="bg-white shadow-lg rounded-lg p-4 sm:p-6 flex flex-col h-full">
+                <div class="flex-grow">
+                    <h1 class="text-2xl sm:text-3xl font-bold text-gray-800 mb-2">Vehicle Tracker</h1>
+                    <p class="text-gray-500 mb-6">Live Simulation</p>
+
+                    <div class="space-y-4">
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Choose Destination</h2>
+                            <select id="destinationSelect" class="w-full p-2 border border-gray-300 rounded-md bg-white">
+                                <!-- Options will be populated by JavaScript -->
+                            </select>
+                        </div>
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Total Distance</h2>
+                            <p id="totalDistance" class="text-lg font-bold text-gray-700">0.00 km</p>
+                        </div>
+                        <hr/>
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Status</h2>
+                            <p id="status" class="text-lg font-bold text-orange-500">Paused</p>
+                        </div>
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Current Location</h2>
+                            <p id="location" class="text-lg font-medium text-gray-700">N/A</p>
+                        </div>
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Coordinates</h2>
+                            <p id="coordinates" class="text-lg font-mono text-gray-700">N/A</p>
+                        </div>
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Timestamp</h2>
+                            <p id="timestamp" class="text-lg font-medium text-gray-700">N/A</p>
+                        </div>
+                        <div>
+                            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Speed</h2>
+                            <p id="speed" class="text-lg font-bold text-blue-600">0 km/h</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex space-x-4 mt-6">
+                    <button id="playPauseBtn" class="flex-1 py-3 px-4 rounded-lg text-white font-bold text-lg transition-all duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 bg-blue-600 hover:bg-blue-700 focus:ring-blue-500">
+                        Play
+                    </button>
+                    <button id="resetBtn" class="py-3 px-4 rounded-lg bg-gray-200 text-gray-700 font-bold text-lg transition-all duration-300 ease-in-out hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2">
+                        Reset
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- Map Container -->
+        <div class="flex-grow h-1/2 sm:h-full w-full sm:w-2/3 md:w-3/4 lg:w-4/5">
+            <div id="map"></div>
+        </div>
+    </main>
+
+    <!-- Main Application Script -->
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- STATE MANAGEMENT ---
+        let map;
+        let vehicleMarker, startMarker, destinationMarker;
+        let traveledPathLine, routeToDestinationLine;
+        let simulationInterval;
+        let currentIndex = 0;
+        let destinationIndex = 0;
+        let isRunning = false;
+
+        // --- UI ELEMENTS ---
+        const ui = {
+            playPauseBtn: document.getElementById('playPauseBtn'),
+            resetBtn: document.getElementById('resetBtn'),
+            destinationSelect: document.getElementById('destinationSelect'),
+            totalDistance: document.getElementById('totalDistance'),
+            status: document.getElementById('status'),
+            location: document.getElementById('location'),
+            coordinates: document.getElementById('coordinates'),
+            timestamp: document.getElementById('timestamp'),
+            speed: document.getElementById('speed'),
+        };
+
+        // --- DUMMY DATA ---
+        const generateDummyRoute = () => {
+            const baseTime = new Date().getTime();
+            const routePoints = [
+                { "latitude": 27.1751, "longitude": 78.0421, "name": "Taj Mahal (Start)" },
+                { "latitude": 27.1730, "longitude": 78.0421, "name": "South Gate" },
+                { "latitude": 27.1705, "longitude": 78.0422, "name": "Parking Area" },
+                { "latitude": 27.1682, "longitude": 78.0445, "name": "Fatehabad Road" },
+                { "latitude": 27.1658, "longitude": 78.0478, "name": "Hotel Clarks Shiraz" },
+                { "latitude": 27.1635, "longitude": 78.0510, "name": "Agra Cantt Road" },
+                { "latitude": 27.1610, "longitude": 78.0545, "name": "Sadar Bazar" },
+                { "latitude": 27.1588, "longitude": 78.0580, "name": "The Mall Road" },
+                { "latitude": 27.1565, "longitude": 78.0615, "name": "Agra Fort Crossing" },
+                { "latitude": 27.1795, "longitude": 78.0211, "name": "Agra Fort (End)" }
+            ];
+            return routePoints.map((point, index) => ({
+                ...point,
+                timestamp: new Date(baseTime + index * 45 * 1000).toISOString()
+            }));
+        };
+        const dummyRoute = generateDummyRoute();
+        const fullRouteLatLngs = dummyRoute.map(p => [p.latitude, p.longitude]);
+
+        // --- HELPER FUNCTIONS ---
+        const haversineDistance = (coords1, coords2) => {
+            const toRad = (x) => (x * Math.PI) / 180;
+            const R = 6371; // Earth radius in km
+            const dLat = toRad(coords2.latitude - coords1.latitude);
+            const dLon = toRad(coords2.longitude - coords1.longitude);
+            const lat1 = toRad(coords1.latitude);
+            const lat2 = toRad(coords2.latitude);
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        };
+
+        const calculateBearing = (lat1, lon1, lat2, lon2) => {
+            const toRad = (deg) => deg * Math.PI / 180;
+            const toDeg = (rad) => rad * 180 / Math.PI;
+            const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+            const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+            return (toDeg(Math.atan2(y, x)) + 360) % 360;
+        };
+
+        // --- INITIALIZATION ---
+        function initialize() {
+            populateDestinationSelect();
+            destinationIndex = dummyRoute.length - 1;
+            
+            const startPoint = dummyRoute[0];
+            map = L.map('map').setView([startPoint.latitude, startPoint.longitude], 14);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+            
+            const vehicleIcon = L.icon({
+                iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMwMDYzRkYiIHN0cm9rZS13aWR0aD0iMS41IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLXRydWNrIj48cGF0aCBkPSJNMTQgMTZIMmEyIDIgMCAwIDEgLTItMlY0YTIgMiAwIDAgMSAyLTJoOWwxIDRINDoiLz48cGF0aCBkPSJNMTEgMTZIMjBhMiAyIDAgMCAwIDItMlY3YTIgMiAwIDAgMC0yLTJIMTYiLz48Y2lyY2xlIGN4PSI1LjUiIGN5PSIxOCIgcj0iMi41Ii8+PGNpcmNsZSBjeD0iMTguNSIgY3k9IjE4IiByPSIyLjUiLz48L3N2Zz4=',
+                iconSize: [38, 38],
+                iconAnchor: [19, 19],
+            });
+
+            const pinIcon = (color) => L.divIcon({
+                html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" width="32" height="32"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>`,
+                className: '',
+                iconSize: [32, 32],
+                iconAnchor: [16, 32]
+            });
+
+            vehicleMarker = L.marker([startPoint.latitude, startPoint.longitude], {
+                icon: vehicleIcon,
+                rotationAngle: 0,
+                rotationOrigin: 'center center'
+            }).addTo(map);
+            
+            startMarker = L.marker([startPoint.latitude, startPoint.longitude], { icon: pinIcon('#28a745') }).addTo(map);
+            destinationMarker = L.marker([startPoint.latitude, startPoint.longitude], { icon: pinIcon('#dc3545') }).addTo(map);
+            
+            routeToDestinationLine = L.polyline([], { color: '#5a6268', weight: 4, opacity: 0.8, dashArray: '10, 10' }).addTo(map);
+            
+            updateDestination();
+            updateUI(startPoint, 0);
+        }
+
+        function populateDestinationSelect() {
+            dummyRoute.forEach((point, index) => {
+                if (index === 0) return;
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = point.name;
+                ui.destinationSelect.appendChild(option);
+            });
+            ui.destinationSelect.value = dummyRoute.length - 1;
+        }
+
+        function updateDestination() {
+            destinationIndex = parseInt(ui.destinationSelect.value, 10);
+            const destinationPoint = dummyRoute[destinationIndex];
+            destinationMarker.setLatLng([destinationPoint.latitude, destinationPoint.longitude]);
+
+            const routeSlice = fullRouteLatLngs.slice(0, destinationIndex + 1);
+            routeToDestinationLine.setLatLngs(routeSlice);
+
+            let totalDist = 0;
+            for (let i = 0; i < destinationIndex; i++) {
+                totalDist += haversineDistance(dummyRoute[i], dummyRoute[i+1]);
+            }
+            ui.totalDistance.textContent = `${totalDist.toFixed(2)} km`;
+        }
+
+        function updateUI(point, speed) {
+            ui.location.textContent = point.name;
+            ui.coordinates.textContent = `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}`;
+            ui.timestamp.textContent = new Date(point.timestamp).toLocaleTimeString();
+            ui.speed.textContent = `${Math.round(speed)} km/h`;
+        }
+        
+        function runSimulationStep() {
+            if (currentIndex >= destinationIndex) {
+                handlePlayPause(); // Stop at destination
+                return;
+            }
+            currentIndex++;
+
+            const prevPoint = dummyRoute[currentIndex - 1];
+            const currentPoint = dummyRoute[currentIndex];
+            const newLatLng = [currentPoint.latitude, currentPoint.longitude];
+
+            // Update marker
+            const bearing = calculateBearing(prevPoint.latitude, prevPoint.longitude, currentPoint.latitude, currentPoint.longitude);
+            vehicleMarker.setRotationAngle(bearing);
+            vehicleMarker.setLatLng(newLatLng);
+            map.panTo(newLatLng, { animate: true, duration: 1.0 });
+
+            // Update UI
+            const distance = haversineDistance(prevPoint, currentPoint);
+            const timeDiff = (new Date(currentPoint.timestamp) - new Date(prevPoint.timestamp)) / 1000 / 3600;
+            const calculatedSpeed = timeDiff > 0 ? distance / timeDiff : 0;
+            updateUI(currentPoint, calculatedSpeed);
+
+            // Update snake line
+            if (traveledPathLine) {
+                traveledPathLine.remove();
+            }
+            const traveledPath = fullRouteLatLngs.slice(0, currentIndex + 1);
+            traveledPathLine = L.polyline(traveledPath, {
+                color: '#0063FF',
+                weight: 5
+            }).addTo(map);
+            traveledPathLine.snakeIn();
+        }
+
+        function handlePlayPause() {
+            isRunning = !isRunning;
+            ui.destinationSelect.disabled = isRunning;
+
+            if (isRunning) {
+                if (currentIndex >= destinationIndex) {
+                    handleReset(true);
+                    return;
+                }
+                ui.playPauseBtn.textContent = 'Pause';
+                ui.playPauseBtn.classList.replace('bg-blue-600', 'bg-orange-500');
+                ui.status.textContent = 'Running';
+                ui.status.classList.replace('text-orange-500', 'text-green-600');
+                
+                // Run the first step immediately, then set interval for subsequent steps
+                runSimulationStep();
+                simulationInterval = setInterval(runSimulationStep, 2000);
+            } else {
+                clearInterval(simulationInterval);
+                ui.playPauseBtn.textContent = 'Play';
+                ui.playPauseBtn.classList.replace('bg-orange-500', 'bg-blue-600');
+                ui.status.textContent = 'Paused';
+                ui.status.classList.replace('text-green-600', 'text-orange-500');
+            }
+        }
+
+        function handleReset(autoPlay = false) {
+            clearInterval(simulationInterval);
+            isRunning = false;
+            currentIndex = 0;
+            
+            if (traveledPathLine) {
+                traveledPathLine.remove();
+                traveledPathLine = null;
+            }
+            
+            ui.destinationSelect.disabled = false;
+
+            const startPoint = dummyRoute[0];
+            vehicleMarker.setLatLng([startPoint.latitude, startPoint.longitude]);
+            vehicleMarker.setRotationAngle(0);
+            map.setView([startPoint.latitude, startPoint.longitude], 14);
+            
+            updateDestination();
+            updateUI(startPoint, 0);
+            
+            ui.playPauseBtn.textContent = 'Play';
+            ui.playPauseBtn.classList.replace('bg-orange-500', 'bg-blue-600');
+            ui.status.textContent = 'Paused';
+            ui.status.classList.replace('text-green-600', 'text-orange-500');
+
+            if (autoPlay) {
+                setTimeout(() => handlePlayPause(), 100);
+            }
+        }
+
+        // --- EVENT LISTENERS ---
+        ui.playPauseBtn.addEventListener('click', handlePlayPause);
+        ui.resetBtn.addEventListener('click', () => handleReset(false));
+        ui.destinationSelect.addEventListener('change', () => {
+            if (!isRunning) {
+                handleReset(false);
+            }
+        });
+
+        // --- START THE APP ---
+        initialize();
+    });
+    </script>
+
+</body>
+</html>
